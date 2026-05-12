@@ -200,11 +200,17 @@ namespace BetterClock
             Log.LogInfo($"BetterClock: Auto-size enabled, fontSizeMax={tmp.fontSizeMax}");
         }
 
+        // TimeUI.Update() postfix — runs after the game's own update so tired/sleep warnings
+        // still fire, then we overwrite only the clock text with our custom format.
+        [HarmonyPatch(typeof(TimeUI), "Update")]
+        [HarmonyPostfix]
+        static void TimeUIUpdatePostfix()
+        {
+            UpdateClockText();
+        }
+
         static void UpdateClockText()
         {
-            // Keep TimeUI disabled so its Update() never overwrites our text or triggers animations.
-            if (_timeUI != null && _timeUI.enabled) _timeUI.enabled = false;
-
             if (_clockText == null)
             {
                 if (_clockTextSearched) return;
@@ -216,8 +222,7 @@ namespace BetterClock
 
                 var timeUI = allTimeUIs[0];
                 _timeUI = timeUI;
-                timeUI.enabled = false;  // stop TimeUI.Update() from changing the text and triggering animations
-                Log.LogInfo("BetterClock: TimeUI disabled");
+                Log.LogInfo("BetterClock: TimeUI found (left enabled so game warnings still work)");
 
                 _clockText = Traverse.Create(timeUI).Field("showingTextMesh")
                     .GetValue<TextMeshProUGUI>();
