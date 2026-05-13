@@ -34,11 +34,12 @@ namespace BetterClock
 
         internal static WorldTime _worldTime = null;
         internal static TextMeshProUGUI _clockText = null;
-        internal static bool _clockTextSearched = false;
         internal static TimeUI _timeUI = null;
 
         private static int _tickCount = 0;
         private static int _tickTime = 0;
+        private static int _clockTextSearchCooldown = 0;
+        private static FieldInfo _currentGameDateField = null;
 
         public Plugin()
         {
@@ -57,9 +58,6 @@ namespace BetterClock
             _harmony = Harmony.CreateAndPatchAll(typeof(Plugin));
             Logger.LogInfo($"Plugin {PluginInfo.PLUGIN_GUID} is loaded!");
             gameSpeed = SpeedState.normal;
-
-            // Inject into Unity's PlayerLoop — survives FishingTweaks cleanup because
-            // it has no GameObject/MonoBehaviour that can be destroyed.
             InjectIntoPlayerLoop();
         }
 
@@ -91,7 +89,13 @@ namespace BetterClock
         static void WorldTimeUpdatePostfix(WorldTime __instance)
         {
             _worldTime = __instance;
-            betterClockTime = Traverse.Create(__instance).Field("currentGameDate").GetValue<GameDate>();
+            if (_currentGameDateField == null)
+                _currentGameDateField = typeof(WorldTime).GetField("currentGameDate",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (_currentGameDateField != null)
+                betterClockTime = (GameDate)_currentGameDateField.GetValue(__instance);
+            else
+                betterClockTime = Traverse.Create(__instance).Field("currentGameDate").GetValue<GameDate>();
         }
 
         // ── PlayerLoop injection ──────────────────────────────────────────────
@@ -101,7 +105,7 @@ namespace BetterClock
             var loop = PlayerLoop.GetCurrentPlayerLoop();
             bool ok = TryInject(ref loop);
             PlayerLoop.SetPlayerLoop(loop);
-            Log.LogInfo($"BetterClock: PlayerLoop injection {(ok ? "OK — ticks will start next frame" : "FAILED")}");
+            if (!ok) Log.LogError("BetterClock: PlayerLoop injection FAILED — clock will not update");
         }
 
         static bool TryInject(ref PlayerLoopSystem loop)
@@ -130,9 +134,6 @@ namespace BetterClock
         static void BetterClockTick()
         {
             _tickCount++;
-            if (_tickCount == 1 || _tickCount == 60 || _tickCount == 600)
-                Log.LogInfo($"BetterClock: PlayerLoop tick #{_tickCount}");
-
             try
             {
                 HandleHotkeys();
@@ -181,23 +182,26 @@ namespace BetterClock
                     DebugLog($"Found WorldTime active={_worldTime.isActiveAndEnabled}");
                 }
             }
+
+            // Read time directly — WorldTimeUpdatePostfix may have been removed by another mod
             if (_worldTime != null)
             {
-                betterClockTime = Traverse.Create(_worldTime)
-                    .Field("currentGameDate").GetValue<GameDate>();
-                DebugLog($"Time: {betterClockTime.hour}:{betterClockTime.min} " +
-                         $"day={betterClockTime.day} week={betterClockTime.week}");
+                if (_currentGameDateField == null)
+                    _currentGameDateField = typeof(WorldTime).GetField("currentGameDate",
+                        BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                if (_currentGameDateField != null)
+                    betterClockTime = (GameDate)_currentGameDateField.GetValue(_worldTime);
+                else
+                    betterClockTime = Traverse.Create(_worldTime).Field("currentGameDate").GetValue<GameDate>();
             }
         }
 
         static void EnableAutoSize(TextMeshProUGUI tmp)
         {
             float original = tmp.fontSize;
-            Log.LogInfo($"BetterClock: Original font size={original}");
             tmp.enableAutoSizing = true;
             tmp.fontSizeMin = 4f;
             tmp.fontSizeMax = (original > 0 ? original : 36f) * 0.88f;
-            Log.LogInfo($"BetterClock: Auto-size enabled, fontSizeMax={tmp.fontSizeMax}");
         }
 
         // TimeUI.Update() postfix — runs after the game's own update so tired/sleep warnings
@@ -213,22 +217,20 @@ namespace BetterClock
         {
             if (_clockText == null)
             {
-                if (_clockTextSearched) return;
-                _clockTextSearched = true;
+                if (_clockTextSearchCooldown > 0) { _clockTextSearchCooldown--; return; }
+                _clockTextSearchCooldown = 120; // retry at most once every ~2 seconds
 
                 var allTimeUIs = Resources.FindObjectsOfTypeAll<TimeUI>();
-                Log.LogInfo($"BetterClock: FindAll<TimeUI>={allTimeUIs.Length}");
-                if (allTimeUIs.Length == 0) { _clockTextSearched = false; return; }
+                DebugLog($"FindAll<TimeUI>={allTimeUIs.Length}");
+                if (allTimeUIs.Length == 0) return;
 
                 var timeUI = allTimeUIs[0];
                 _timeUI = timeUI;
-                Log.LogInfo("BetterClock: TimeUI found (left enabled so game warnings still work)");
 
                 _clockText = Traverse.Create(timeUI).Field("showingTextMesh")
                     .GetValue<TextMeshProUGUI>();
                 if (_clockText != null)
                 {
-                    Log.LogInfo("BetterClock: Found clock text via 'showingTextMesh'");
                     EnableAutoSize(_clockText);
                 }
                 else
@@ -240,9 +242,6 @@ namespace BetterClock
                         if (f.FieldType == typeof(TextMeshProUGUI))
                         {
                             var val = (TextMeshProUGUI)f.GetValue(timeUI);
-                            Log.LogInfo(
-                                $"BetterClock: TimeUI TMP field '{f.Name}' = " +
-                                $"{(val == null ? "null" : val.gameObject.name)}");
                             if (_clockText == null && val != null)
                                 _clockText = val;
                         }
@@ -251,17 +250,13 @@ namespace BetterClock
                     if (_clockText == null)
                     {
                         var tmps = timeUI.GetComponentsInChildren<TextMeshProUGUI>(true);
-                        Log.LogInfo($"BetterClock: GetComponentsInChildren<TMP>={tmps.Length}");
                         if (tmps.Length > 0)
-                        {
                             _clockText = tmps[0];
-                            Log.LogInfo($"BetterClock: Using child TMP '{_clockText.gameObject.name}'");
-                        }
                     }
 
                     if (_clockText == null)
                     {
-                        Log.LogInfo("BetterClock: Could not find any TMP in TimeUI");
+                        Log.LogWarning("BetterClock: Could not find clock text in TimeUI");
                         return;
                     }
                     EnableAutoSize(_clockText);
