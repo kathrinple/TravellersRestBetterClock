@@ -1,0 +1,22 @@
+Better Clock - Changelog
+========================
+
+v1.3.2
+------
+- Fixed: The speed up, slow down, and pause hotkeys were not working.
+  You can now press F9 to cycle through normal / fast / slow time speed,
+  and assign a pause key in the config file to pause/unpause time.
+
+v1.3.1
+------
+- Fixed: Clock was showing 00:00 when other mods (e.g. FishingTweaks)
+  interfered with Harmony patches.
+- Fixed: The "you are tired" warning emoji now appears correctly again.
+- Reduced log spam.
+
+v1.3.0
+------
+- Updated fork of Better Clock by DrStalker.
+- Fixed compatibility with FishingTweaks mod.
+- Eliminated clock flickering.
+- Added option to show three-character weekday names (e.g. "Wed" instead of "We").
