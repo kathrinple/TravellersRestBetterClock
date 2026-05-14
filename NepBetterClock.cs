@@ -40,6 +40,8 @@ namespace BetterClock
         private static int _tickTime = 0;
         private static int _clockTextSearchCooldown = 0;
         private static FieldInfo _currentGameDateField = null;
+        private static bool _speedKeyPrev = false;
+        private static bool _pauseKeyPrev = false;
 
         public Plugin()
         {
@@ -80,6 +82,14 @@ namespace BetterClock
             else if (gameSpeed == SpeedState.slow) { newSpeed = _speedMultSlow.Value; gameSpeedText = "-"; }
             else { newSpeed = 1.0f; gameSpeedText = ""; }
             WorldTime.multiplierDevConsole = newSpeed;
+        }
+
+        // Re-apply speed every frame before WorldTime reads multiplierDevConsole.
+        [HarmonyPatch(typeof(WorldTime), "Update")]
+        [HarmonyPrefix]
+        static void WorldTimeUpdatePrefix()
+        {
+            SetWorldSpeed();
         }
 
         // WorldTime postfix — grabbed at frame 0 before FishingTweaks removes it.
@@ -151,20 +161,28 @@ namespace BetterClock
 
         static void HandleHotkeys()
         {
-            if (_speedHotKey != null && _speedHotKey.Value != KeyCode.None
-                && Input.GetKeyDown(_speedHotKey.Value))
+            bool speedKey = _speedHotKey != null && _speedHotKey.Value != KeyCode.None
+                            && Input.GetKey(_speedHotKey.Value);
+            bool pauseKey = _pauseHotKey != null && _pauseHotKey.Value != KeyCode.None
+                            && Input.GetKey(_pauseHotKey.Value);
+
+            if (speedKey && !_speedKeyPrev)
             {
+                DebugLog($"Speed key pressed ({_speedHotKey.Value})");
                 if (gameSpeed == SpeedState.normal) gameSpeed = SpeedState.fast;
                 else if (gameSpeed == SpeedState.fast) gameSpeed = SpeedState.slow;
                 else gameSpeed = SpeedState.normal;
                 SetWorldSpeed();
             }
-            if (_pauseHotKey != null && _pauseHotKey.Value != KeyCode.None
-                && Input.GetKeyDown(_pauseHotKey.Value))
+            if (pauseKey && !_pauseKeyPrev)
             {
+                DebugLog($"Pause key pressed ({_pauseHotKey.Value})");
                 paused = !paused;
                 SetWorldSpeed();
             }
+
+            _speedKeyPrev = speedKey;
+            _pauseKeyPrev = pauseKey;
         }
 
         static void ReadTime()
